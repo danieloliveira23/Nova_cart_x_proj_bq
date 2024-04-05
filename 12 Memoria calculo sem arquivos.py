@@ -8,13 +8,11 @@ import Parametros
 
 export = pd.DataFrame()
 
-dfdatas = pd.DataFrame([[1, 2, 2024],[15, 2, 2024],[20, 2, 2024],[29, 2, 2024],[15, 3, 2024]],columns = ['Day', 'Month', 'Year'])
+dfdatas = pd.DataFrame([[21, 2, 2024], [28, 2, 2024],[5, 3, 2024],[10, 3, 2024],[15, 3, 2024],[20, 3, 2024],[30, 3, 2024]],columns = ['Day', 'Month', 'Year'])
 dfdatas["Date-Time"] = pd.to_datetime(dfdatas)
 dfdatas["Date-Time"] = pd.to_datetime(dfdatas["Date-Time"]).dt.date
 
-primeirocorte = datetime.date(2023,7,31)
-segundocorte = datetime.date(2023,8,31)
-terceirocorte = datetime.date(2023,9,30)
+
 
 
 pathgeral = Parametros.cart_x_proj
@@ -23,6 +21,7 @@ conclientes = pd.read_csv(pathgeral + "Cod_clientes_novo.csv", low_memory=False)
 conartigos = pd.read_csv(pathgeral + "Cod art final.csv")
 conembarques = pd.read_excel(pathgeral + "De_para_periodos.xlsx")
 vendalivre = pd.read_csv(pathgeral + "Venda livre.csv", low_memory=False)
+
 conembarques["Embarque"] = pd.to_datetime(conembarques["Embarque"]).dt.date
 
 # Ordem de alocação dos canais
@@ -58,11 +57,9 @@ for i in range(len(dfdatas)):
     final["Pçs falta"] = 0
     final["Vlr atende"] = 0
     final["Vlr falta"] = 0
-    #final.to_csv("meudeus.csv")
-
 
     #Join com estoque original
-    dfest = pd.read_excel(pathgeral + "usarestoque livre + bloq.xlsx")
+    dfest = pd.read_excel(pathgeral + "usarestoque livre.xlsx")
     dfestoque = pd.DataFrame(dfest)
     dfestoque["TAM"] = dfestoque["TAM"].astype(str)
     dfestoque["TAM"] = dfestoque["TAM"].str.lstrip('0')
@@ -163,6 +160,7 @@ for i in range(len(dfdatas)):
     canalind = [MI, KA, MM, FQ, LP, WEB]
     basefinal['Indice Canal'] = np.select(canais, canalind, default=1)
 
+
     var2 = basefinal.sort_values(by=['chave','Embarque', 'Sit','Indice tipord','Indice Canal','Ordem' ])
 
     finalmente = pd.DataFrame(var2)
@@ -231,47 +229,102 @@ for i in range(len(dfdatas)):
     dbconfig = pd.merge(dbconfig, vendalivre, on="Ordem art", how="left")
     dbconfig.drop("Ordem art", axis=1, inplace=True)
 
+    faixa_ped = pd.DataFrame(dbconfig)
 
+    faixa_ped = faixa_ped[["Ordem", "Pecas", "Pçs atende"]]
 
-    #geral.to_csv(pathgeral + "Geralzasso " + teste + ".csv", index=False)
+    faixa_ped = faixa_ped.groupby(["Ordem"], dropna=False)[["Pecas", "Pçs atende"]].sum().reset_index()
+    faixa_ped['Pçs atende'] = faixa_ped['Pçs atende'].fillna(0)
+    faixa_ped['Pecas'] = faixa_ped['Pecas'].fillna(0)
 
-    #ka = pd.DataFrame(geral)
+    faixa_ped["% Atendimento"] = faixa_ped["Pçs atende"] / faixa_ped["Pecas"]
+    faixa_ped['% Atendimento'] = faixa_ped['% Atendimento'].fillna(0)
+
+    faixa_ped["Faixa atendimento"] = ""
+    faixa_ped["Faixa atendimento"] = np.where((faixa_ped["% Atendimento"] >= 0) & (faixa_ped["% Atendimento"] < 0.5),
+                                              "Menor 50%", faixa_ped["Faixa atendimento"])
+    faixa_ped["Faixa atendimento"] = np.where((faixa_ped["% Atendimento"] >= 0.5) & (faixa_ped["% Atendimento"] < 0.7),
+                                              "Maior 50%", faixa_ped["Faixa atendimento"])
+    faixa_ped["Faixa atendimento"] = np.where((faixa_ped["% Atendimento"] >= 0.7) & (faixa_ped["% Atendimento"] < 0.8),
+                                              "Maior 70%", faixa_ped["Faixa atendimento"])
+    faixa_ped["Faixa atendimento"] = np.where((faixa_ped["% Atendimento"] >= 0.8) & (faixa_ped["% Atendimento"] < 0.97),
+                                              "Maior 80%", faixa_ped["Faixa atendimento"])
+    faixa_ped["Faixa atendimento"] = np.where(faixa_ped["% Atendimento"] >= 0.97, "Maior 97%",
+                                               faixa_ped["Faixa atendimento"])
+
+    faixa_ped = faixa_ped[["Ordem", "Faixa atendimento"]]
+
+    dbconfig = pd.merge(dbconfig, faixa_ped, on="Ordem", how="left")
+
+    geral = pd.DataFrame(dbconfig)
+    geral = geral[["Ordem", "Artigo", "Posição", "Tamanho", "Pecas", "Pçs atende"]]
+    geral["Ordem art pos"] = geral["Ordem"].astype(str) + geral["Artigo"].astype(str) + geral["Posição"].astype(str)
+    geral = geral.groupby(["Ordem art pos", "Tamanho"], dropna=False)[["Pecas", "Pçs atende"]].sum().reset_index()
+    geral = geral.loc[geral["Pecas"] > 0]
+    geral["Percentual"] = geral["Pçs atende"] / geral["Pecas"]
+    grade = pd.DataFrame(geral)
+    grade = grade.loc[grade["Percentual"] >= 0.5]
+    geral = geral.groupby(["Ordem art pos"], dropna=False)["Tamanho"].nunique(dropna=False).reset_index()
+    grade = grade.groupby(["Ordem art pos"], dropna=False)["Tamanho"].nunique(dropna=False).reset_index()
+    geral = pd.merge(geral, grade, on="Ordem art pos", how="left")
+    geral["Tamanho_y"] = geral["Tamanho_y"].fillna(0)
+    geral["Status grade 50%"] = np.where(geral["Tamanho_x"] == geral["Tamanho_y"], "Grade completa", "Grade quebrada")
+    geral.drop("Tamanho_x", axis=1, inplace=True)
+    geral.drop("Tamanho_y", axis=1, inplace=True)
+
+    dbconfig["Ordem art pos"] = (dbconfig["Ordem"].astype(str)
+                                 + dbconfig["Artigo"].astype(str)
+                                 + dbconfig["Posição"].astype(str))
+    dbconfig = pd.merge(dbconfig, geral, on="Ordem art pos", how="left")
+
+    #dbconfig = dbconfig.loc[dbconfig["Embarque"] <= datetime.date(2024, 2,29)]
+    #dbconfig.to_csv(pathgeral + "Geralzasso " + teste + ".csv", index=False)
+
+    #ka = pd.DataFrame(dbconfig)
     #ka = ka.loc[ka["Canal"] == "KA"]
     #ka.to_csv(pathgeral + "KA " + teste + ".csv")
 
-    #fq1 = pd.DataFrame(geral)
-    #fq2 = pd.DataFrame(geral)
-    #fq3 = pd.DataFrame(geral)
-
-    #fq1 = fq1.loc[(fq1['Canal'] == "FQ") & (fq1['Embarque'] <= primeirocorte)]
-    #fq2 = fq2.loc[(fq2['Canal'] == "FQ") & (fq2['Embarque'] > primeirocorte) & (fq2['Embarque'] <= segundocorte)]
-    #fq3 = fq3.loc[(fq3['Canal'] == "FQ") & (fq3['Embarque'] > segundocorte) & (fq3['Embarque'] <= terceirocorte)]
-
-    #fq1.to_csv(pathgeral + "FQ1 " + teste + ".csv")
-    #fq2.to_csv(pathgeral + "FQ2 " + teste + ".csv")
-    #fq3.to_csv(pathgeral + "FQ3 " + teste + ".csv")
-
-    #mm1 = pd.DataFrame(geral)
-    #mm2 = pd.DataFrame(geral)
-    #mm3 = pd.DataFrame(geral)
-
-    #mm1 = mm1.loc[(mm1['Canal'] == "MM") & (mm1['Embarque'] <= primeirocorte)]
-    #mm2 = mm2.loc[(mm2['Canal'] == "MM") & (mm2['Embarque'] > primeirocorte) & (mm2['Embarque'] <= segundocorte)]
-    #mm3 = mm3.loc[(mm3['Canal'] == "MM") & (mm3['Embarque'] > segundocorte) & (mm3['Embarque'] <= terceirocorte)]
-    #mm1.to_csv(pathgeral + "MM1 " + teste + ".csv")
-    #mm2.to_csv(pathgeral + "MM2 " + teste + ".csv")
-    #mm3.to_csv(pathgeral + "MM3 " + teste + ".csv")
+    # fq1 = pd.DataFrame(dbconfig)
+    # fq2 = pd.DataFrame(dbconfig)
+    # fq3 = pd.DataFrame(dbconfig)
+    #
+    # fq1 = fq1.loc[(fq1['Canal'] == "FQ") & (fq1['Embarque'] <= Parametros.primeirocorte)]
+    # fq2 = fq2.loc[(fq2['Canal'] == "FQ") & (fq2['Embarque'] > Parametros.primeirocorte) & (fq2['Embarque'] <= Parametros.segundocorte)]
+    # fq3 = fq3.loc[(fq3['Canal'] == "FQ") & (fq3['Embarque'] > Parametros.segundocorte) & (fq3['Embarque'] <= Parametros.terceirocorte)]
+    #
+    # fq1.to_csv(pathgeral + "FQ1 " + teste + ".csv")
+    # fq2.to_csv(pathgeral + "FQ2 " + teste + ".csv")
+    # fq3.to_csv(pathgeral + "FQ3 " + teste + ".csv")
+    #
+    # mm1 = pd.DataFrame(dbconfig)
+    # mm2 = pd.DataFrame(dbconfig)
+    # mm3 = pd.DataFrame(dbconfig)
+    #
+    # mm1 = mm1.loc[(mm1['Canal'] == "MM") & (mm1['Embarque'] <= Parametros.primeirocorte)]
+    # mm2 = mm2.loc[(mm2['Canal'] == "MM") & (mm2['Embarque'] > Parametros.primeirocorte) & (mm2['Embarque'] <= Parametros.segundocorte)]
+    # mm3 = mm3.loc[(mm3['Canal'] == "MM") & (mm3['Embarque'] > Parametros.segundocorte) & (mm3['Embarque'] <= Parametros.terceirocorte)]
+    # mm1.to_csv(pathgeral + "MM1 " + teste + ".csv")
+    # mm2.to_csv(pathgeral + "MM2 " + teste + ".csv")
+    # mm3.to_csv(pathgeral + "MM3 " + teste + ".csv")
 
     #geral = geral[["Artigo", "Tipord", "Colecao", "Neg", "Pecas", "Valor", "Pçs atende", "Pçs falta", "Vlr atende", "Vlr falta","Canal", "Posição", "Grupo ", "LINX Tipo ", "Gênero ", "Tipo Material ", "Produção (P/T) ", "Origem (N/I)","Linha", "Origem", "Bloco", "Período", "Status pedido","Tamanho","Sit","Embarque","Centro"]]
+    #Usar o group by para suspenso com estoque
+    # dbconfig = dbconfig.groupby(
+    #      ["Ordem", "CNPJ", "Código cliente", "Nome cliente","Estado", "Tipord", "Colecao", "NEGOCIO", "Canal", "Posição", "GRUPO", "MATERIAL", "GENERO", "Tipo material",
+    #       "Fabricação P/T", "Origem N/I", "LINHA", "Origem final", "Bloco", "Período", "Sit",
+    #       "Embarque", "Centro", "Neg gen", "Status entrada", "NR_PEDCLI", "Cond pgto", "Faixa atendimento"], dropna=False)[
+    #      ["Pecas", "Valor", "Pçs atende", "Pçs falta", "Vlr atende", "Vlr falta"]].sum().reset_index()
 
+    dbconfig = dbconfig[["Artigo", "Tipord", "Colecao", "NEGOCIO", "Canal", "Posição", "GRUPO", "MATERIAL", "GENERO", "Tipo material",
+         "Fabricação P/T", "Origem N/I", "LINHA", "Origem final", "Bloco", "Período", "Tamanho", "Sit",
+         "Embarque", "Centro", "Neg gen", "Status entrada","NR_PEDCLI","Cond pgto", "Faixa atendimento", "Antecipa","Status grade 50%", "Ordem","Pecas", "Valor", "Pçs atende", "Pçs falta", "Vlr atende", "Vlr falta"]]
 
     dbconfig = dbconfig.groupby(["Artigo", "Tipord", "Colecao", "NEGOCIO", "Canal", "Posição", "GRUPO", "MATERIAL", "GENERO", "Tipo material",
          "Fabricação P/T", "Origem N/I", "LINHA", "Origem final", "Bloco", "Período", "Tamanho", "Sit",
-         "Embarque", "Centro", "Neg gen", "Status entrada","NR_PEDCLI","Cond pgto"], dropna=False)[["Pecas", "Valor", "Pçs atende", "Pçs falta", "Vlr atende", "Vlr falta"]].sum().reset_index()
+         "Embarque", "Centro", "Neg gen", "Status entrada","NR_PEDCLI","Cond pgto", "Faixa atendimento", "Antecipa","Status grade 50%", "Ordem"], dropna=False)[["Pecas", "Valor", "Pçs atende", "Pçs falta", "Vlr atende", "Vlr falta"]].sum().reset_index()
     export = pd.concat([export, dbconfig])
 
 
 export.to_csv(pathgeral + "Resumo final " + str(datetime.date.today()) + ".csv",index=False)
-
-#junta_base_geral()
+export.to_parquet(pathgeral + "Resumo final " + str(datetime.date.today()) + ".parquet")
 #juntatudo()
